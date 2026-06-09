@@ -4,6 +4,7 @@ import {
   insertPlant,
   listPlants,
   toClientPlant,
+  updatePlant,
   type IdentificationCandidate,
   type PlantSource,
 } from "@/lib/storage";
@@ -108,6 +109,40 @@ function storageError(error: unknown) {
   );
 }
 
+function cleanPayload(payload: PlantPayload, id: string, now: string) {
+  const nickname =
+    cleanText(payload.nickname, 120) ??
+    cleanText(payload.commonName, 120) ??
+    cleanText(payload.scientificName, 120) ??
+    "Unnamed plant";
+
+  return {
+    id,
+    updatedAt: now,
+    nickname,
+    commonName: cleanText(payload.commonName, 140),
+    scientificName: cleanText(payload.scientificName, 180),
+    family: cleanText(payload.family, 140),
+    cultivar: cleanText(payload.cultivar, 140),
+    source: cleanSource(payload.source),
+    passportRaw: cleanLongText(payload.passportRaw),
+    passportBotanical: cleanText(payload.passportBotanical, 180),
+    passportTraceability: cleanText(payload.passportTraceability, 180),
+    passportOrigin: cleanText(payload.passportOrigin, 120),
+    passportOperator: cleanText(payload.passportOperator, 180),
+    qrPayload: cleanLongText(payload.qrPayload),
+    nursery: cleanText(payload.nursery, 180),
+    gardenLocation: cleanText(payload.gardenLocation, 160),
+    plantedOn: cleanText(payload.plantedOn, 32),
+    careNotes: cleanLongText(payload.careNotes),
+    identificationConfidence: cleanConfidence(payload.identificationConfidence),
+    identificationCandidates: cleanCandidates(payload.identificationCandidates),
+    imageKey: cleanText(payload.imageKey, 500),
+    imageContentType: cleanText(payload.imageContentType, 80),
+    imageFilename: cleanText(payload.imageFilename, 220),
+  };
+}
+
 export async function GET() {
   try {
     return Response.json({ plants: listPlants().map(toClientPlant) });
@@ -125,42 +160,37 @@ export async function POST(request: Request) {
     return Response.json({ error: "Plant data was not valid JSON." }, { status: 400 });
   }
 
-  const nickname =
-    cleanText(payload.nickname, 120) ??
-    cleanText(payload.commonName, 120) ??
-    cleanText(payload.scientificName, 120) ??
-    "Unnamed plant";
   const now = new Date().toISOString();
 
   try {
     const plant = insertPlant({
-      id: crypto.randomUUID(),
+      ...cleanPayload(payload, crypto.randomUUID(), now),
       createdAt: now,
-      updatedAt: now,
-      nickname,
-      commonName: cleanText(payload.commonName, 140),
-      scientificName: cleanText(payload.scientificName, 180),
-      family: cleanText(payload.family, 140),
-      cultivar: cleanText(payload.cultivar, 140),
-      source: cleanSource(payload.source),
-      passportRaw: cleanLongText(payload.passportRaw),
-      passportBotanical: cleanText(payload.passportBotanical, 180),
-      passportTraceability: cleanText(payload.passportTraceability, 180),
-      passportOrigin: cleanText(payload.passportOrigin, 120),
-      passportOperator: cleanText(payload.passportOperator, 180),
-      qrPayload: cleanLongText(payload.qrPayload),
-      nursery: cleanText(payload.nursery, 180),
-      gardenLocation: cleanText(payload.gardenLocation, 160),
-      plantedOn: cleanText(payload.plantedOn, 32),
-      careNotes: cleanLongText(payload.careNotes),
-      identificationConfidence: cleanConfidence(payload.identificationConfidence),
-      identificationCandidates: cleanCandidates(payload.identificationCandidates),
-      imageKey: cleanText(payload.imageKey, 500),
-      imageContentType: cleanText(payload.imageContentType, 80),
-      imageFilename: cleanText(payload.imageFilename, 220),
     });
 
     return Response.json({ plant: toClientPlant(plant) }, { status: 201 });
+  } catch (error) {
+    return storageError(error);
+  }
+}
+
+export async function PATCH(request: Request) {
+  const id = new URL(request.url).searchParams.get("id");
+  if (!id) {
+    return Response.json({ error: "Plant id is required." }, { status: 400 });
+  }
+
+  let payload: PlantPayload;
+
+  try {
+    payload = (await request.json()) as PlantPayload;
+  } catch {
+    return Response.json({ error: "Plant data was not valid JSON." }, { status: 400 });
+  }
+
+  try {
+    const plant = updatePlant(cleanPayload(payload, id, new Date().toISOString()));
+    return Response.json({ plant: toClientPlant(plant) });
   } catch (error) {
     return storageError(error);
   }

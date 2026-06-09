@@ -43,6 +43,8 @@ export type PlantInsert = Omit<PlantRecord, "createdAt"> & {
   createdAt?: string;
 };
 
+export type PlantUpdate = Omit<PlantRecord, "createdAt">;
+
 type PlantRow = {
   id: string;
   created_at: string;
@@ -264,6 +266,71 @@ export function insertPlant(record: PlantInsert) {
 
   if (!row) {
     throw new Error("Saved plant could not be read back from storage.");
+  }
+
+  return rowToPlant(row);
+}
+
+export function updatePlant(record: PlantUpdate) {
+  getDatabase()
+    .prepare(
+      `UPDATE plants SET
+        updated_at = ?,
+        nickname = ?,
+        common_name = ?,
+        scientific_name = ?,
+        family = ?,
+        cultivar = ?,
+        source = ?,
+        passport_raw = ?,
+        passport_botanical = ?,
+        passport_traceability = ?,
+        passport_origin = ?,
+        passport_operator = ?,
+        qr_payload = ?,
+        nursery = ?,
+        garden_location = ?,
+        planted_on = ?,
+        care_notes = ?,
+        identification_confidence = ?,
+        identification_candidates = ?,
+        image_key = ?,
+        image_content_type = ?,
+        image_filename = ?
+      WHERE id = ?`
+    )
+    .run(
+      record.updatedAt,
+      record.nickname,
+      record.commonName,
+      record.scientificName,
+      record.family,
+      record.cultivar,
+      record.source,
+      record.passportRaw,
+      record.passportBotanical,
+      record.passportTraceability,
+      record.passportOrigin,
+      record.passportOperator,
+      record.qrPayload,
+      record.nursery,
+      record.gardenLocation,
+      record.plantedOn,
+      record.careNotes,
+      record.identificationConfidence,
+      record.identificationCandidates ? JSON.stringify(record.identificationCandidates) : null,
+      record.imageKey,
+      record.imageContentType,
+      record.imageFilename,
+      record.id
+    );
+
+  const row = getDatabase()
+    .prepare("SELECT * FROM plants WHERE id = ?")
+    .get(record.id) as PlantRow | undefined;
+
+  if (!row) {
+    throw new Error("Plant was not found.");
   }
 
   return rowToPlant(row);

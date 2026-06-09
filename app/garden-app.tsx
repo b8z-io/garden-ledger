@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type Source = "passport" | "qr" | "photo" | "manual";
+type Theme = "light" | "dark";
 
 type Candidate = {
   scientificName: string;
@@ -109,6 +110,11 @@ const SOURCE_LABELS: Record<Source, string> = {
   manual: "Manual",
 };
 
+const FILTER_LABELS: Record<Source | "all", string> = {
+  all: "All",
+  ...SOURCE_LABELS,
+};
+
 function extractPassportValue(text: string, marker: string) {
   const pattern = new RegExp(`(?:^|[\\s;|])${marker}[\\s:.-]+([^\\n;|]+)`, "i");
   return text.match(pattern)?.[1]?.trim() ?? "";
@@ -152,10 +158,41 @@ function confidenceLabel(value: number | null) {
   return `${value.toFixed(value >= 10 ? 1 : 2)}%`;
 }
 
+function plantToForm(plant: Plant): FormState {
+  return {
+    nickname: plant.nickname,
+    commonName: plant.commonName ?? "",
+    scientificName: plant.scientificName ?? "",
+    family: plant.family ?? "",
+    cultivar: plant.cultivar ?? "",
+    source: plant.source,
+    passportRaw: plant.passportRaw ?? "",
+    passportBotanical: plant.passportBotanical ?? "",
+    passportTraceability: plant.passportTraceability ?? "",
+    passportOrigin: plant.passportOrigin ?? "",
+    passportOperator: plant.passportOperator ?? "",
+    qrPayload: plant.qrPayload ?? "",
+    nursery: plant.nursery ?? "",
+    gardenLocation: plant.gardenLocation ?? "",
+    plantedOn: plant.plantedOn ?? "",
+    careNotes: plant.careNotes ?? "",
+    identificationConfidence: plant.identificationConfidence,
+    identificationCandidates: plant.identificationCandidates ?? [],
+    imageKey: plant.imageKey ?? "",
+    imageContentType: plant.imageContentType ?? "",
+    imageFilename: plant.imageFilename ?? "",
+    imageUrl: plant.imageUrl ?? "",
+  };
+}
+
 export default function GardenApp() {
   const [plants, setPlants] = useState<Plant[]>([]);
   const [form, setForm] = useState<FormState>(BLANK_FORM);
   const [activeSource, setActiveSource] = useState<Source>("passport");
+  const [theme, setTheme] = useState<Theme>("light");
+  const [editingPlantId, setEditingPlantId] = useState<string | null>(null);
+  const [registerQuery, setRegisterQuery] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<Source | "all">("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [identifying, setIdentifying] = useState(false);
@@ -183,9 +220,58 @@ export default function GardenApp() {
     };
   }, [plants]);
 
+  const filteredPlants = useMemo(() => {
+    const query = registerQuery.trim().toLowerCase();
+
+    return plants.filter((plant) => {
+      const matchesSource = sourceFilter === "all" || plant.source === sourceFilter;
+      if (!matchesSource) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      return [
+        plant.nickname,
+        plant.commonName,
+        plant.scientificName,
+        plant.family,
+        plant.cultivar,
+        plant.nursery,
+        plant.gardenLocation,
+        plant.careNotes,
+      ]
+        .filter(Boolean)
+        .some((value) => value!.toLowerCase().includes(query));
+    });
+  }, [plants, registerQuery, sourceFilter]);
+
   useEffect(() => {
     void loadPlants();
   }, []);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      const storedTheme = window.localStorage.getItem("garden-ledger-theme");
+      if (storedTheme === "dark" || storedTheme === "light") {
+        setTheme(storedTheme);
+        return;
+      }
+
+      setTheme(
+        window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light"
+      );
+    });
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem("garden-ledger-theme", theme);
+  }, [theme]);
 
   function updateField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -194,6 +280,29 @@ export default function GardenApp() {
   function selectSource(source: Source) {
     setActiveSource(source);
     updateField("source", source);
+  }
+
+  function resetForm() {
+    setForm(BLANK_FORM);
+    setActiveSource("passport");
+    setEditingPlantId(null);
+    setSelectedImageName("");
+    if (photoInputRef.current) {
+      photoInputRef.current.value = "";
+    }
+    if (qrInputRef.current) {
+      qrInputRef.current.value = "";
+    }
+  }
+
+  function editPlant(plant: Plant) {
+    setForm(plantToForm(plant));
+    setActiveSource(plant.source);
+    setEditingPlantId(plant.id);
+    setSelectedImageName(plant.imageFilename ?? "");
+    setError("");
+    setStatus(`Editing ${plant.nickname}`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function loadPlants() {
@@ -349,28 +458,29 @@ export default function GardenApp() {
     setError("");
 
     try {
-      const response = await fetch("/api/plants", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
+      const response = await fetch(
+        editingPlantId
+          ? `/api/plants?id=${encodeURIComponent(editingPlantId)}`
+          : "/api/plants",
+        {
+          method: editingPlantId ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(form),
+        }
+      );
       const data = (await response.json()) as { plant?: Plant; error?: string };
 
       if (!response.ok || !data.plant) {
         throw new Error(data.error ?? "Could not save plant.");
       }
 
-      setPlants((current) => [data.plant!, ...current]);
-      setForm(BLANK_FORM);
-      setActiveSource("passport");
-      setSelectedImageName("");
-      if (photoInputRef.current) {
-        photoInputRef.current.value = "";
-      }
-      if (qrInputRef.current) {
-        qrInputRef.current.value = "";
-      }
-      setStatus("Plant saved");
+      setPlants((current) =>
+        editingPlantId
+          ? current.map((plant) => (plant.id === editingPlantId ? data.plant! : plant))
+          : [data.plant!, ...current]
+      );
+      resetForm();
+      setStatus(editingPlantId ? "Plant updated" : "Plant saved");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save plant.");
       setStatus("Save failed");
@@ -393,6 +503,9 @@ export default function GardenApp() {
       }
 
       setPlants((current) => current.filter((plant) => plant.id !== id));
+      if (editingPlantId === id) {
+        resetForm();
+      }
       setStatus("Plant removed");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not delete plant.");
@@ -403,7 +516,20 @@ export default function GardenApp() {
     <main className="garden-shell">
       <section className="top-band">
         <div className="brand-block">
-          <p className="eyebrow">Garden Ledger</p>
+          <div className="brand-top-row">
+            <p className="eyebrow">Garden Ledger</p>
+            <label className="theme-toggle">
+              <input
+                checked={theme === "dark"}
+                onChange={(event) =>
+                  setTheme(event.target.checked ? "dark" : "light")
+                }
+                type="checkbox"
+              />
+              <span aria-hidden="true" />
+              <em>{theme === "dark" ? "Dark" : "Light"}</em>
+            </label>
+          </div>
           <h1>Plants in this garden</h1>
           <div className="status-row" aria-live="polite">
             <span className={error ? "status-dot status-error" : "status-dot"} />
@@ -439,7 +565,7 @@ export default function GardenApp() {
       <section className="workspace-grid">
         <form className="plant-form" onSubmit={savePlant}>
           <div className="section-heading">
-            <h2>Add plant</h2>
+            <h2>{editingPlantId ? "Edit plant" : "Add plant"}</h2>
             <div className="segmented-control" aria-label="Record source">
               {(Object.keys(SOURCE_LABELS) as Source[]).map((source) => (
                 <button
@@ -644,17 +770,19 @@ export default function GardenApp() {
 
           <div className="form-actions">
             <button disabled={saving} type="submit">
-              {saving ? "+ Saving" : "+ Save plant"}
+              {saving
+                ? editingPlantId
+                  ? "Updating"
+                  : "+ Saving"
+                : editingPlantId
+                  ? "Update plant"
+                  : "+ Save plant"}
             </button>
             <button
-              onClick={() => {
-                setForm(BLANK_FORM);
-                setActiveSource("passport");
-                setSelectedImageName("");
-              }}
+              onClick={resetForm}
               type="button"
             >
-              Reset
+              {editingPlantId ? "Cancel edit" : "Reset"}
             </button>
           </div>
         </form>
@@ -667,6 +795,29 @@ export default function GardenApp() {
             </button>
           </div>
 
+          <div className="register-tools">
+            <label>
+              <span>Browse plants</span>
+              <input
+                value={registerQuery}
+                onChange={(event) => setRegisterQuery(event.target.value)}
+                placeholder="Search name, location, nursery, notes"
+              />
+            </label>
+            <div className="filter-row" aria-label="Filter plants by source">
+              {(Object.keys(FILTER_LABELS) as Array<Source | "all">).map((source) => (
+                <button
+                  className={sourceFilter === source ? "active" : ""}
+                  key={source}
+                  onClick={() => setSourceFilter(source)}
+                  type="button"
+                >
+                  {FILTER_LABELS[source]}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="source-summary" aria-label="Plants by source">
             {(Object.keys(SOURCE_LABELS) as Source[]).map((source) => (
               <span key={source} className={sourceClass(source)}>
@@ -674,6 +825,10 @@ export default function GardenApp() {
               </span>
             ))}
           </div>
+
+          <p className="register-count">
+            Showing {filteredPlants.length} of {plants.length}
+          </p>
 
           <div className="plant-list">
             {plants.length === 0 && (
@@ -691,7 +846,13 @@ export default function GardenApp() {
               </div>
             )}
 
-            {plants.map((plant) => (
+            {plants.length > 0 && filteredPlants.length === 0 && (
+              <div className="empty-state compact-empty">
+                <strong>No plants match that browse filter</strong>
+              </div>
+            )}
+
+            {filteredPlants.map((plant) => (
               <article className="plant-card" key={plant.id}>
                 <div className="plant-image">
                   {plant.imageUrl ? (
@@ -713,9 +874,14 @@ export default function GardenApp() {
                       <span className={sourceClass(plant.source)}>{SOURCE_LABELS[plant.source]}</span>
                       <h3>{plant.nickname}</h3>
                     </div>
-                    <button onClick={() => void deletePlant(plant.id)} type="button" aria-label="Delete plant">
-                      x
-                    </button>
+                    <div className="plant-card-actions">
+                      <button onClick={() => editPlant(plant)} type="button">
+                        Edit
+                      </button>
+                      <button onClick={() => void deletePlant(plant.id)} type="button" aria-label="Delete plant">
+                        x
+                      </button>
+                    </div>
                   </div>
                   <p>
                     {plant.commonName || plant.scientificName || "Unidentified"}
