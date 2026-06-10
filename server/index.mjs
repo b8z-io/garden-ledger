@@ -6,7 +6,6 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { createServer as createViteServer } from "vite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -21,14 +20,18 @@ const PLANTNET_ENDPOINT = "https://my-api.plantnet.org/v2/identify/all";
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 let db = null;
-const viteServer = isDev
-  ? await createViteServer({
-      appType: "spa",
-      server: {
-        middlewareMode: true,
-      },
-    })
-  : null;
+const viteServer = isDev ? await createDevViteServer() : null;
+
+async function createDevViteServer() {
+  const { createServer } = await import("vite");
+
+  return createServer({
+    appType: "spa",
+    server: {
+      middlewareMode: true,
+    },
+  });
+}
 
 function dataDir() {
   return process.env.DATA_DIR ?? path.join(rootDir, "data");
