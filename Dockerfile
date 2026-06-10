@@ -7,8 +7,6 @@ RUN npm ci
 
 FROM node:22.13-bookworm-slim AS builder
 WORKDIR /app
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_OPTIONS=--experimental-sqlite
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
@@ -18,7 +16,6 @@ WORKDIR /app
 
 ENV DATA_DIR=/data
 ENV HOSTNAME=0.0.0.0
-ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 ENV NODE_OPTIONS=--experimental-sqlite
 ENV PORT=3000
@@ -29,11 +26,10 @@ RUN mkdir -p /data/uploads && chown -R node:node /data
 
 USER node
 
-COPY --from=builder --chown=node:node /app/public ./public
-COPY --from=builder --chown=node:node /app/.next/standalone ./
-COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --from=builder --chown=node:node /app/server ./server
 
 VOLUME ["/data"]
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["node", "server/index.mjs"]

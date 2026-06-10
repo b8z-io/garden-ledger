@@ -13,7 +13,7 @@
 # testing
 /coverage
 
-# next.js
+# app build output
 /.next/
 /out/
 
@@ -36,7 +36,6 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts
 /dist/
 /.vinext/
 /.wrangler/

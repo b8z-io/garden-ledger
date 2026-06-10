@@ -5,27 +5,18 @@ A self-hosted garden inventory for recording plants from:
 - plant passport or nursery label text
 - QR label images through the browser `BarcodeDetector` API
 - plant photos identified through the PlantNet API
+- a garden overview photo used as a placement map for recorded plants
 
-The app runs as a single Next.js container. It stores plant metadata in SQLite
-and uploaded photos on disk under the mounted `/data` volume.
+The app runs as a single Vue 3/Vite front end with a small Node/SQLite API in
+one Docker container. It stores plant metadata in SQLite and uploaded photos on
+disk under the mounted `/data` volume.
 
 ## Deploy From GitHub
-
-On your development machine, push this project to a GitHub repository:
-
-```bash
-git init
-git add .
-git commit -m "Initial Garden Ledger app"
-git branch -M main
-git remote add origin git@github.com:YOUR_USER/garden-ledger.git
-git push -u origin main
-```
 
 On the Linux host:
 
 ```bash
-git clone git@github.com:YOUR_USER/garden-ledger.git
+git clone https://github.com/b8z-io/garden-ledger.git
 cd garden-ledger
 cp .env.example .env
 ```
@@ -34,7 +25,7 @@ Edit `.env` and set:
 
 ```bash
 PLANTNET_API_KEY=your-token-here
-APP_PORT=3000
+APP_PORT=3033
 ```
 
 Then start it:
