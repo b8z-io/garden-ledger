@@ -561,11 +561,16 @@ h1 {
 }
 
 .map-canvas-wrap {
+  display: flex;
+  justify-content: center;
   min-width: 0;
+  overflow: visible;
 }
 
 .map-canvas {
   position: relative;
+  display: inline-block;
+  max-width: 100%;
   overflow: visible;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -574,6 +579,9 @@ h1 {
 }
 
 .map-canvas img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
   max-height: 68vh;
   border-radius: var(--radius);
   object-fit: contain;
