@@ -96,13 +96,36 @@ function getDatabase() {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS garden_maps (
+      id TEXT PRIMARY KEY NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      updated_at TEXT NOT NULL,
+      name TEXT NOT NULL,
+      image_key TEXT NOT NULL,
+      image_content_type TEXT,
+      image_filename TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS garden_map_positions (
+      map_id TEXT NOT NULL,
+      plant_id TEXT NOT NULL,
+      x REAL NOT NULL,
+      y REAL NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (map_id, plant_id),
+      FOREIGN KEY (map_id) REFERENCES garden_maps (id) ON DELETE CASCADE,
+      FOREIGN KEY (plant_id) REFERENCES plants (id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS plants_created_at_idx ON plants (created_at);
     CREATE INDEX IF NOT EXISTS plants_source_idx ON plants (source);
     CREATE INDEX IF NOT EXISTS plants_garden_location_idx ON plants (garden_location);
+    CREATE INDEX IF NOT EXISTS garden_map_positions_plant_idx ON garden_map_positions (plant_id);
   `);
 
   ensurePlantColumn("map_x", "REAL");
   ensurePlantColumn("map_y", "REAL");
+  migrateLegacyGardenMap();
   return db;
 }
 
@@ -420,6 +443,174 @@ function setSetting(key, value) {
     .run(key, JSON.stringify(value));
 }
 
+function rowToGardenMap(row) {
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    name: row.name,
+    imageKey: row.image_key,
+    imageContentType: row.image_content_type,
+    imageFilename: row.image_filename,
+  };
+}
+
+function rowToMapPlacement(row) {
+  return {
+    mapId: row.map_id,
+    plantId: row.plant_id,
+    x: row.x,
+    y: row.y,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toClientGardenMap(map) {
+  return {
+    ...map,
+    imageUrl: imageKeyToUrl(map.imageKey),
+    placements: listMapPlacements(map.id),
+  };
+}
+
+function listGardenMaps() {
+  return getDatabase()
+    .prepare("SELECT * FROM garden_maps ORDER BY created_at DESC")
+    .all()
+    .map(rowToGardenMap);
+}
+
+function readGardenMap(id) {
+  const row = getDatabase().prepare("SELECT * FROM garden_maps WHERE id = ?").get(id);
+  return row ? rowToGardenMap(row) : null;
+}
+
+function listMapPlacements(mapId) {
+  return getDatabase()
+    .prepare("SELECT * FROM garden_map_positions WHERE map_id = ? ORDER BY updated_at DESC")
+    .all(mapId)
+    .map(rowToMapPlacement);
+}
+
+function readMapPlacement(mapId, plantId) {
+  const row = getDatabase()
+    .prepare("SELECT * FROM garden_map_positions WHERE map_id = ? AND plant_id = ?")
+    .get(mapId, plantId);
+  return row ? rowToMapPlacement(row) : null;
+}
+
+function cleanMapName(value, fallback) {
+  return cleanText(value, 100) ?? fallback;
+}
+
+function createGardenMap(saved, name) {
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  const mapName = cleanMapName(name, saved.imageFilename.replace(/\.[^.]+$/, ""));
+
+  getDatabase()
+    .prepare(
+      `INSERT INTO garden_maps (
+        id, created_at, updated_at, name, image_key, image_content_type, image_filename
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      id,
+      now,
+      now,
+      mapName,
+      saved.imageKey,
+      saved.imageContentType,
+      saved.imageFilename
+    );
+
+  return readGardenMap(id);
+}
+
+function deleteGardenMap(id) {
+  const map = readGardenMap(id);
+  getDatabase().prepare("DELETE FROM garden_maps WHERE id = ?").run(id);
+  return map;
+}
+
+function upsertMapPlacement(mapId, plantId, x, y) {
+  if (!readGardenMap(mapId) || !readPlant(plantId)) {
+    return null;
+  }
+
+  const cleanX = cleanCoordinate(x);
+  const cleanY = cleanCoordinate(y);
+  if (cleanX === null || cleanY === null) {
+    throw new Error("Placement coordinates must be between 0 and 1.");
+  }
+
+  const now = new Date().toISOString();
+  getDatabase()
+    .prepare(
+      `INSERT INTO garden_map_positions (map_id, plant_id, x, y, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(map_id, plant_id) DO UPDATE SET
+        x = excluded.x,
+        y = excluded.y,
+        updated_at = excluded.updated_at`
+    )
+    .run(mapId, plantId, cleanX, cleanY, now);
+
+  return readMapPlacement(mapId, plantId);
+}
+
+function deleteMapPlacement(mapId, plantId) {
+  const placement = readMapPlacement(mapId, plantId);
+  getDatabase()
+    .prepare("DELETE FROM garden_map_positions WHERE map_id = ? AND plant_id = ?")
+    .run(mapId, plantId);
+  return placement;
+}
+
+function migrateLegacyGardenMap() {
+  if (getSetting("garden-maps-v2-migrated")) {
+    return;
+  }
+
+  const legacyMap = getSetting("garden-map");
+  if (legacyMap?.imageKey) {
+    const existing = getDatabase()
+      .prepare("SELECT * FROM garden_maps WHERE image_key = ?")
+      .get(legacyMap.imageKey);
+    const now = new Date().toISOString();
+    const map =
+      existing ??
+      (() => {
+        const id = randomUUID();
+        getDatabase()
+          .prepare(
+            `INSERT INTO garden_maps (
+              id, created_at, updated_at, name, image_key, image_content_type, image_filename
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            id,
+            legacyMap.updatedAt ?? now,
+            legacyMap.updatedAt ?? now,
+            "Garden overview",
+            legacyMap.imageKey,
+            legacyMap.imageContentType ?? null,
+            legacyMap.imageFilename ?? "garden-overview"
+          );
+        return readGardenMap(id);
+      })();
+
+    const positionedPlants = getDatabase()
+      .prepare("SELECT id, map_x, map_y FROM plants WHERE map_x IS NOT NULL AND map_y IS NOT NULL")
+      .all();
+    for (const plant of positionedPlants) {
+      upsertMapPlacement(map.id, plant.id, plant.map_x, plant.map_y);
+    }
+  }
+
+  setSetting("garden-maps-v2-migrated", { at: new Date().toISOString() });
+}
+
 function normalizeOrgan(value) {
   return ["leaf", "flower", "fruit", "bark", "habit", "other"].includes(value)
     ? value
@@ -583,22 +774,15 @@ async function handleApi(request) {
       }
     }
 
-    if (url.pathname === "/api/garden-map") {
+    if (url.pathname === "/api/garden-maps") {
       if (request.method === "GET") {
-        const map = getSetting("garden-map");
-        return json({
-          map: map
-            ? {
-                ...map,
-                imageUrl: imageKeyToUrl(map.imageKey),
-              }
-            : null,
-        });
+        return json({ maps: listGardenMaps().map(toClientGardenMap) });
       }
 
       if (request.method === "POST") {
         const form = await webRequest.formData();
         const image = form.get("image");
+        const name = form.get("name");
 
         if (!(image instanceof File)) {
           return json({ error: "A garden overview image is required." }, 400);
@@ -608,19 +792,79 @@ async function handleApi(request) {
           return json({ error: "Use a JPEG, PNG, or WebP garden photo." }, 400);
         }
 
-        const existing = getSetting("garden-map");
         const buffer = await image.arrayBuffer();
         const saved = await saveUpload(image, buffer, "garden-map");
-        const map = {
-          imageKey: saved.imageKey,
-          imageContentType: saved.imageContentType,
-          imageFilename: saved.imageFilename,
-          updatedAt: new Date().toISOString(),
-        };
+        const map = createGardenMap(saved, name);
 
-        setSetting("garden-map", map);
-        await deleteUpload(existing?.imageKey);
-        return json({ map: { ...map, imageUrl: imageKeyToUrl(map.imageKey) } }, 201);
+        return json({ map: toClientGardenMap(map) }, 201);
+      }
+
+      if (request.method === "DELETE") {
+        const id = url.searchParams.get("id");
+        if (!id) {
+          return json({ error: "Map id is required." }, 400);
+        }
+
+        const removed = deleteGardenMap(id);
+        await deleteUpload(removed?.imageKey);
+        return json({ ok: true });
+      }
+    }
+
+    if (url.pathname === "/api/garden-map-placements") {
+      if (request.method === "POST") {
+        const payload = await webRequest.json();
+        const mapId = cleanText(payload.mapId, 80);
+        const plantId = cleanText(payload.plantId, 80);
+
+        if (!mapId || !plantId) {
+          return json({ error: "Map id and plant id are required." }, 400);
+        }
+
+        const placement = upsertMapPlacement(mapId, plantId, payload.x, payload.y);
+        if (!placement) {
+          return json({ error: "Map or plant was not found." }, 404);
+        }
+
+        return json({ placement });
+      }
+
+      if (request.method === "DELETE") {
+        const mapId = url.searchParams.get("mapId");
+        const plantId = url.searchParams.get("plantId");
+
+        if (!mapId || !plantId) {
+          return json({ error: "Map id and plant id are required." }, 400);
+        }
+
+        deleteMapPlacement(mapId, plantId);
+        return json({ ok: true });
+      }
+    }
+
+    if (url.pathname === "/api/garden-map") {
+      if (request.method === "GET") {
+        const [map] = listGardenMaps();
+        return json({ map: map ? toClientGardenMap(map) : null });
+      }
+
+      if (request.method === "POST") {
+        const form = await webRequest.formData();
+        const image = form.get("image");
+        const name = form.get("name");
+
+        if (!(image instanceof File)) {
+          return json({ error: "A garden overview image is required." }, 400);
+        }
+
+        if (!ALLOWED_IMAGE_TYPES.has(image.type)) {
+          return json({ error: "Use a JPEG, PNG, or WebP garden photo." }, 400);
+        }
+
+        const buffer = await image.arrayBuffer();
+        const saved = await saveUpload(image, buffer, "garden-map");
+        const map = createGardenMap(saved, name);
+        return json({ map: toClientGardenMap(map) }, 201);
       }
     }
 

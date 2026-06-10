@@ -505,6 +505,35 @@ h1 {
   padding: 14px;
 }
 
+.map-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.map-list button {
+  display: grid;
+  height: auto;
+  justify-items: start;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.map-list button.active {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 16%, var(--surface-2));
+}
+
+.map-list span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.map-name-field {
+  display: block;
+  margin-top: 14px;
+}
+
 .upload-button {
   display: inline-flex;
   width: fit-content;
@@ -524,13 +553,20 @@ h1 {
   display: none;
 }
 
+.danger-action {
+  width: 100%;
+  margin-top: 10px;
+  border-color: color-mix(in srgb, var(--red) 55%, var(--line));
+  color: var(--red);
+}
+
 .map-canvas-wrap {
   min-width: 0;
 }
 
 .map-canvas {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-3);
@@ -539,6 +575,7 @@ h1 {
 
 .map-canvas img {
   max-height: 68vh;
+  border-radius: var(--radius);
   object-fit: contain;
 }
 
@@ -582,6 +619,67 @@ h1 {
 .map-pin:hover em,
 .map-pin.selected em {
   display: inline-flex;
+}
+
+.pin-popover {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  width: min(320px, calc(100% - 24px));
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-2) 94%, transparent);
+  box-shadow: var(--shadow);
+  padding: 12px;
+  transform: translate(-50%, calc(-100% - 18px));
+}
+
+.pin-popover > div:first-child,
+.pin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pin-popover > div:first-child button,
+.pin-actions button {
+  padding: 0 9px;
+  font-size: 0.76rem;
+}
+
+.pin-popover p,
+.pin-popover dd {
+  color: var(--muted);
+}
+
+.pin-photo {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: block;
+  object-fit: cover;
+}
+
+.pin-popover dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 5px 9px;
+  font-size: 0.82rem;
+}
+
+.pin-popover dt {
+  color: var(--text);
+  font-weight: 900;
+}
+
+.pin-popover dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .modal-backdrop {

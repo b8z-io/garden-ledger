@@ -5,7 +5,7 @@ A self-hosted garden inventory for recording plants from:
 - plant passport or nursery label text
 - QR label images through the browser `BarcodeDetector` API
 - plant photos identified through the PlantNet API
-- a garden overview photo used as a placement map for recorded plants
+- one or more garden photos used as placement maps for recorded plants
 
 The app runs as a single Vue 3/Vite front end with a small Node/SQLite API in
 one Docker container. It stores plant metadata in SQLite and uploaded photos on

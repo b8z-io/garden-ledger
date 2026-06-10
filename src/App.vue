@@ -41,7 +41,7 @@ const blankForm = () => ({
 });
 
 const plants = ref([]);
-const gardenMap = ref(null);
+const gardenMaps = ref([]);
 const form = ref(blankForm());
 const activeView = ref("database");
 const activeSource = ref("manual");
@@ -57,7 +57,11 @@ const error = ref("");
 const registerQuery = ref("");
 const sourceFilter = ref("all");
 const selectedImageName = ref("");
+const selectedMapId = ref("");
 const selectedMapPlantId = ref("");
+const activePinPlantId = ref("");
+const movingPlantId = ref("");
+const newMapName = ref("");
 
 const sourceTotals = computed(() => {
   return plants.value.reduce(
@@ -73,15 +77,12 @@ const stats = computed(() => {
   const locations = new Set(
     plants.value.map((plant) => plant.gardenLocation).filter(Boolean)
   );
-  const mapped = plants.value.filter(
-    (plant) => plant.mapX !== null && plant.mapY !== null
-  ).length;
 
   return {
     total: plants.value.length,
     locations: locations.size,
     photoIdentified: sourceTotals.value.photo,
-    mapped,
+    mapped: placedPlantIds.value.size,
   };
 });
 
@@ -112,17 +113,108 @@ const filteredPlants = computed(() => {
   });
 });
 
-const unmappedPlants = computed(() =>
-  plants.value.filter((plant) => plant.mapX === null || plant.mapY === null)
+const placedPlantIds = computed(
+  () =>
+    new Set(
+      gardenMaps.value.flatMap((map) =>
+        (map.placements ?? []).map((placement) => placement.plantId)
+      )
+    )
+);
+
+const selectedMap = computed(() =>
+  gardenMaps.value.find((map) => map.id === selectedMapId.value)
+);
+
+const selectedMapPlacements = computed(() => selectedMap.value?.placements ?? []);
+
+const selectedMapPlantIds = computed(
+  () =>
+    new Set(
+      selectedMapPlacements.value.map((placement) => placement.plantId)
+    )
+);
+
+const unmappedPlantsForSelectedMap = computed(() =>
+  selectedMap.value
+    ? plants.value.filter((plant) => !selectedMapPlantIds.value.has(plant.id))
+    : []
 );
 
 const selectedMapPlant = computed(() =>
   plants.value.find((plant) => plant.id === selectedMapPlantId.value)
 );
 
+const movingPlant = computed(() =>
+  plants.value.find((plant) => plant.id === movingPlantId.value)
+);
+
+const placementTargetPlant = computed(
+  () => movingPlant.value ?? selectedMapPlant.value
+);
+
+const mapPins = computed(() =>
+  selectedMapPlacements.value
+    .map((placement) => ({
+      ...placement,
+      plant: plants.value.find((plant) => plant.id === placement.plantId),
+    }))
+    .filter((pin) => pin.plant)
+);
+
+const activePin = computed(() =>
+  mapPins.value.find((pin) => pin.plantId === activePinPlantId.value)
+);
+
+const activePinPlant = computed(() => activePin.value?.plant);
+
+const activePinStyle = computed(() => {
+  if (!activePin.value) {
+    return {};
+  }
+
+  const x = activePin.value.x;
+  const y = activePin.value.y;
+  const style = {
+    top: `${y * 100}%`,
+  };
+  const translateY = y < 0.36 ? "18px" : "calc(-100% - 18px)";
+  let translateX = "-50%";
+
+  if (x > 0.62) {
+    style.right = `${100 - x * 100}%`;
+    translateX = "12px";
+  } else {
+    style.left = `${x * 100}%`;
+    if (x < 0.38) {
+      translateX = "-12px";
+    }
+  }
+
+  style.transform = `translate(${translateX}, ${translateY})`;
+  return style;
+});
+
 watch(theme, (value) => {
   document.documentElement.dataset.theme = value;
   window.localStorage.setItem("garden-ledger-theme", value);
+});
+
+watch(selectedMapId, () => {
+  activePinPlantId.value = "";
+  movingPlantId.value = "";
+  chooseFirstUnmappedPlant();
+});
+
+watch(unmappedPlantsForSelectedMap, () => {
+  if (
+    selectedMapPlantId.value &&
+    !unmappedPlantsForSelectedMap.value.some(
+      (plant) => plant.id === selectedMapPlantId.value
+    )
+  ) {
+    chooseFirstUnmappedPlant();
+  }
 });
 
 onMounted(async () => {
@@ -133,7 +225,7 @@ onMounted(async () => {
     theme.value = "dark";
   }
 
-  await Promise.all([loadPlants(), loadGardenMap()]);
+  await Promise.all([loadPlants(), loadGardenMaps()]);
 });
 
 function sourceClass(source) {
@@ -213,6 +305,28 @@ function setSource(source) {
   form.value.source = source;
 }
 
+function chooseFirstUnmappedPlant() {
+  selectedMapPlantId.value = unmappedPlantsForSelectedMap.value[0]?.id ?? "";
+}
+
+function mapPlacementCount(plantId) {
+  return gardenMaps.value.reduce(
+    (count, map) =>
+      count +
+      (map.placements ?? []).filter((placement) => placement.plantId === plantId)
+        .length,
+    0
+  );
+}
+
+function plantMapNames(plantId) {
+  return gardenMaps.value
+    .filter((map) =>
+      (map.placements ?? []).some((placement) => placement.plantId === plantId)
+    )
+    .map((map) => map.name);
+}
+
 async function loadPlants() {
   loading.value = true;
   error.value = "";
@@ -226,9 +340,7 @@ async function loadPlants() {
     }
 
     plants.value = data.plants ?? [];
-    if (!selectedMapPlantId.value && plants.value.length) {
-      selectedMapPlantId.value = unmappedPlants.value[0]?.id ?? plants.value[0].id;
-    }
+    chooseFirstUnmappedPlant();
     status.value = plants.value.length ? "Garden loaded" : "No records yet";
   } catch (err) {
     plants.value = [];
@@ -239,18 +351,22 @@ async function loadPlants() {
   }
 }
 
-async function loadGardenMap() {
+async function loadGardenMaps() {
   try {
-    const response = await fetch("/api/garden-map");
+    const response = await fetch("/api/garden-maps");
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.error ?? "Could not load garden map.");
+      throw new Error(data.error ?? "Could not load garden maps.");
     }
 
-    gardenMap.value = data.map;
+    gardenMaps.value = data.maps ?? [];
+    if (!selectedMapId.value || !gardenMaps.value.some((map) => map.id === selectedMapId.value)) {
+      selectedMapId.value = gardenMaps.value[0]?.id ?? "";
+    }
+    chooseFirstUnmappedPlant();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Could not load garden map.";
+    error.value = err instanceof Error ? err.message : "Could not load garden maps.";
   }
 }
 
@@ -454,8 +570,20 @@ async function deletePlant(id) {
     }
 
     plants.value = plants.value.filter((plant) => plant.id !== id);
+    gardenMaps.value = gardenMaps.value.map((map) => ({
+      ...map,
+      placements: (map.placements ?? []).filter(
+        (placement) => placement.plantId !== id
+      ),
+    }));
     if (selectedMapPlantId.value === id) {
-      selectedMapPlantId.value = plants.value[0]?.id ?? "";
+      chooseFirstUnmappedPlant();
+    }
+    if (activePinPlantId.value === id) {
+      activePinPlantId.value = "";
+    }
+    if (movingPlantId.value === id) {
+      movingPlantId.value = "";
     }
     status.value = "Plant removed";
   } catch (err) {
@@ -475,7 +603,8 @@ async function uploadGardenMap(event) {
   try {
     const body = new FormData();
     body.append("image", file);
-    const response = await fetch("/api/garden-map", {
+    body.append("name", newMapName.value);
+    const response = await fetch("/api/garden-maps", {
       method: "POST",
       body,
     });
@@ -485,8 +614,10 @@ async function uploadGardenMap(event) {
       throw new Error(data.error ?? "Could not upload garden map.");
     }
 
-    gardenMap.value = data.map;
-    status.value = "Garden photo updated";
+    gardenMaps.value = [data.map, ...gardenMaps.value];
+    selectedMapId.value = data.map.id;
+    newMapName.value = "";
+    status.value = `${data.map.name} added`;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Could not upload garden map.";
   } finally {
@@ -495,41 +626,149 @@ async function uploadGardenMap(event) {
   }
 }
 
+async function deleteSelectedMap() {
+  if (!selectedMap.value) {
+    return;
+  }
+
+  const map = selectedMap.value;
+  error.value = "";
+
+  try {
+    const response = await fetch(`/api/garden-maps?id=${encodeURIComponent(map.id)}`, {
+      method: "DELETE",
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error ?? "Could not delete garden map.");
+    }
+
+    gardenMaps.value = gardenMaps.value.filter((item) => item.id !== map.id);
+    selectedMapId.value = gardenMaps.value[0]?.id ?? "";
+    activePinPlantId.value = "";
+    movingPlantId.value = "";
+    status.value = `${map.name} removed`;
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Could not delete garden map.";
+  }
+}
+
+function updatePlacementState(placement) {
+  gardenMaps.value = gardenMaps.value.map((map) => {
+    if (map.id !== placement.mapId) {
+      return map;
+    }
+
+    return {
+      ...map,
+      placements: [
+        placement,
+        ...(map.placements ?? []).filter(
+          (item) => item.plantId !== placement.plantId
+        ),
+      ],
+    };
+  });
+}
+
 async function placePlant(event) {
-  if (!gardenMap.value || !selectedMapPlant.value) {
+  if (!selectedMap.value) {
+    return;
+  }
+
+  if (!placementTargetPlant.value) {
+    status.value = "Choose a plant to place";
     return;
   }
 
   const rect = event.currentTarget.getBoundingClientRect();
-  const mapX = (event.clientX - rect.left) / rect.width;
-  const mapY = (event.clientY - rect.top) / rect.height;
-  const payload = {
-    ...plantToForm(selectedMapPlant.value),
-    mapX,
-    mapY,
-  };
+  const x = (event.clientX - rect.left) / rect.width;
+  const y = (event.clientY - rect.top) / rect.height;
 
   try {
-    const response = await fetch(
-      `/api/plants?id=${encodeURIComponent(selectedMapPlant.value.id)}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
-    );
+    const response = await fetch("/api/garden-map-placements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mapId: selectedMap.value.id,
+        plantId: placementTargetPlant.value.id,
+        x,
+        y,
+      }),
+    });
     const data = await response.json();
 
-    if (!response.ok || !data.plant) {
+    if (!response.ok || !data.placement) {
       throw new Error(data.error ?? "Could not place plant.");
     }
 
-    plants.value = plants.value.map((plant) =>
-      plant.id === data.plant.id ? data.plant : plant
-    );
-    status.value = `${data.plant.nickname} placed on map`;
+    const plantName = placementTargetPlant.value.nickname;
+    updatePlacementState(data.placement);
+    activePinPlantId.value = data.placement.plantId;
+    movingPlantId.value = "";
+    chooseFirstUnmappedPlant();
+    status.value = `${plantName} placed on ${selectedMap.value.name}`;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Could not place plant.";
+  }
+}
+
+function selectPin(plantId) {
+  activePinPlantId.value = plantId;
+  movingPlantId.value = "";
+}
+
+function startMovePlant(plantId) {
+  movingPlantId.value = plantId;
+  selectedMapPlantId.value = "";
+  activePinPlantId.value = plantId;
+  const plant = plants.value.find((item) => item.id === plantId);
+  status.value = plant ? `Click the map to move ${plant.nickname}` : "Click the map to move pin";
+}
+
+function cancelMove() {
+  movingPlantId.value = "";
+  chooseFirstUnmappedPlant();
+  status.value = "Move cancelled";
+}
+
+async function removeMapPlacement(plantId) {
+  if (!selectedMap.value) {
+    return;
+  }
+
+  error.value = "";
+
+  try {
+    const response = await fetch(
+      `/api/garden-map-placements?mapId=${encodeURIComponent(
+        selectedMap.value.id
+      )}&plantId=${encodeURIComponent(plantId)}`,
+      { method: "DELETE" }
+    );
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error ?? "Could not remove map pin.");
+    }
+
+    gardenMaps.value = gardenMaps.value.map((map) =>
+      map.id === selectedMap.value.id
+        ? {
+            ...map,
+            placements: (map.placements ?? []).filter(
+              (placement) => placement.plantId !== plantId
+            ),
+          }
+        : map
+    );
+    activePinPlantId.value = "";
+    movingPlantId.value = "";
+    chooseFirstUnmappedPlant();
+    status.value = "Map pin removed";
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Could not remove map pin.";
   }
 }
 </script>
@@ -700,9 +939,9 @@ async function placePlant(event) {
                   <dt>Match</dt>
                   <dd>{{ confidenceLabel(plant.identificationConfidence) }}</dd>
                 </template>
-                <template v-if="plant.mapX !== null && plant.mapY !== null">
+                <template v-if="mapPlacementCount(plant.id)">
                   <dt>Map</dt>
-                  <dd>Placed</dd>
+                  <dd>{{ plantMapNames(plant.id).join(", ") }}</dd>
                 </template>
               </dl>
             </div>
@@ -713,50 +952,135 @@ async function placePlant(event) {
       <section v-else class="view-panel map-view">
         <div class="map-sidebar">
           <div class="map-upload">
-            <h2>Garden photo</h2>
-            <p>Upload a broad garden photo, then choose a plant and click its position.</p>
+            <h2>Garden maps</h2>
+            <p>Add one overview for the whole garden, or separate photos for each bed.</p>
+
+            <div v-if="gardenMaps.length" class="map-list" aria-label="Garden maps">
+              <button
+                v-for="map in gardenMaps"
+                :key="map.id"
+                :class="{ active: selectedMapId === map.id }"
+                type="button"
+                @click="selectedMapId = map.id"
+              >
+                <strong>{{ map.name }}</strong>
+                <span>{{ (map.placements ?? []).length }} pins</span>
+              </button>
+            </div>
+
+            <label class="map-name-field">
+              <span>New map name</span>
+              <input v-model="newMapName" placeholder="South bed, patio pots, whole garden" />
+            </label>
+
             <label class="upload-button">
               <input accept="image/jpeg,image/png,image/webp" type="file" @change="uploadGardenMap" />
-              {{ uploadingMap ? "Uploading..." : "Upload overview photo" }}
+              {{ uploadingMap ? "Uploading..." : "Add map photo" }}
             </label>
+
+            <button
+              v-if="selectedMap"
+              class="danger-action"
+              type="button"
+              @click="deleteSelectedMap"
+            >
+              Delete selected map
+            </button>
           </div>
 
-          <label>
+          <label v-if="selectedMap">
             <span>Plant to place</span>
-            <select v-model="selectedMapPlantId">
-              <option disabled value="">Choose a plant</option>
-              <option v-for="plant in plants" :key="plant.id" :value="plant.id">
+            <select v-model="selectedMapPlantId" :disabled="!!movingPlantId || !unmappedPlantsForSelectedMap.length">
+              <option disabled value="">
+                {{ unmappedPlantsForSelectedMap.length ? "Choose an unmapped plant" : "All plants placed" }}
+              </option>
+              <option v-for="plant in unmappedPlantsForSelectedMap" :key="plant.id" :value="plant.id">
                 {{ plant.nickname }}
               </option>
             </select>
           </label>
 
-          <div class="map-hints">
-            <strong>{{ unmappedPlants.length }} unmapped</strong>
-            <p>Click the image to place or move the selected plant.</p>
+          <div v-if="selectedMap" class="map-hints">
+            <strong v-if="movingPlant">Moving {{ movingPlant.nickname }}</strong>
+            <strong v-else>{{ unmappedPlantsForSelectedMap.length }} unmapped on {{ selectedMap.name }}</strong>
+            <p>
+              {{
+                movingPlant
+                  ? "Click the image to set the new pin position."
+                  : unmappedPlantsForSelectedMap.length
+                    ? "Choose an unmapped plant, then click the image to place it."
+                    : "Every plant is pinned on this map. Use a pin popup to move or remove one."
+              }}
+            </p>
+            <button v-if="movingPlant" type="button" @click="cancelMove">
+              Cancel move
+            </button>
           </div>
         </div>
 
         <div class="map-canvas-wrap">
-          <div v-if="gardenMap" class="map-canvas" @click="placePlant">
-            <img :src="gardenMap.imageUrl" alt="Garden overview" />
+          <div v-if="selectedMap" class="map-canvas" @click="placePlant">
+            <img :src="selectedMap.imageUrl" :alt="selectedMap.name" />
             <button
-              v-for="plant in plants.filter((item) => item.mapX !== null && item.mapY !== null)"
-              :key="plant.id"
+              v-for="pin in mapPins"
+              :key="pin.plantId"
               class="map-pin"
-              :class="{ selected: plant.id === selectedMapPlantId }"
-              :style="{ left: `${plant.mapX * 100}%`, top: `${plant.mapY * 100}%` }"
+              :class="{ selected: pin.plantId === activePinPlantId || pin.plantId === movingPlantId }"
+              :style="{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }"
               type="button"
-              @click.stop="selectedMapPlantId = plant.id"
+              @click.stop="selectPin(pin.plantId)"
             >
-              <span>{{ plant.nickname[0] }}</span>
-              <em>{{ plant.nickname }}</em>
+              <span>{{ pin.plant.nickname[0] }}</span>
+              <em>{{ pin.plant.nickname }}</em>
             </button>
+
+            <aside
+              v-if="activePinPlant"
+              class="pin-popover"
+              :style="activePinStyle"
+              @click.stop
+            >
+              <div>
+                <span :class="sourceClass(activePinPlant.source)">
+                  {{ sourceLabels[activePinPlant.source] }}
+                </span>
+                <button type="button" aria-label="Close plant popup" @click="activePinPlantId = ''">
+                  Close
+                </button>
+              </div>
+              <h3>{{ activePinPlant.nickname }}</h3>
+              <img
+                v-if="activePinPlant.imageUrl"
+                class="pin-photo"
+                :src="activePinPlant.imageUrl"
+                :alt="activePinPlant.nickname"
+              />
+              <p>{{ activePinPlant.commonName || activePinPlant.scientificName || "Unidentified" }}</p>
+              <dl>
+                <template v-if="activePinPlant.scientificName">
+                  <dt>Scientific</dt>
+                  <dd>{{ activePinPlant.scientificName }}</dd>
+                </template>
+                <template v-if="activePinPlant.gardenLocation">
+                  <dt>Spot</dt>
+                  <dd>{{ activePinPlant.gardenLocation }}</dd>
+                </template>
+                <template v-if="activePinPlant.careNotes">
+                  <dt>Notes</dt>
+                  <dd>{{ activePinPlant.careNotes }}</dd>
+                </template>
+              </dl>
+              <div class="pin-actions">
+                <button type="button" @click="openEdit(activePinPlant)">Edit</button>
+                <button type="button" @click="startMovePlant(activePinPlant.id)">Move pin</button>
+                <button type="button" @click="removeMapPlacement(activePinPlant.id)">Remove</button>
+              </div>
+            </aside>
           </div>
           <div v-else class="map-empty">
             <img src="/garden-workbench.png" alt="" />
-            <strong>No garden overview yet</strong>
-            <p>Use a photo from upstairs or the end of the garden to create a placement map.</p>
+            <strong>No garden maps yet</strong>
+            <p>Upload an upstairs overview, a bed close-up, or a patio container photo.</p>
           </div>
         </div>
       </section>
