@@ -45,9 +45,14 @@ body,
   min-height: 100%;
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   min-width: 320px;
   margin: 0;
+  overflow-y: scroll;
   background:
     radial-gradient(circle at top left, rgb(31 138 97 / 12%), transparent 30rem),
     var(--bg);
@@ -299,6 +304,7 @@ h1 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
+  width: 100%;
 }
 
 .metric-grid article,
