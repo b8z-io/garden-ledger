@@ -1,5 +1,23 @@
 # Garden Ledger
 
+I've never been a gardener, so as I approach my 56th birthday I figured it was
+about time I tried it out. Our new-build garden is very bare, just grass
+basically, so I dug out a border and went to town.
+
+But I wanted a way of recording what I'd planted, with a side-quest of being
+able to add care instructions in the future. So I've made a Docker container if
+anyone wants to give it a spin.
+
+You can add a plant by uploading a photo, which gets identified using an API
+call to [PlantNet](https://my.plantnet.org/), which offers a free account.
+
+You can also upload multiple photos of your garden and place pins where the
+plants are.
+
+![Garden Ledger plant database](docs/screenshots/plant-database.png)
+
+![Garden Ledger garden map](docs/screenshots/garden-map.png)
+
 A self-hosted garden inventory for recording plants from:
 
 - plant passport or nursery label text
