@@ -504,7 +504,8 @@ h1 {
 }
 
 .map-upload,
-.map-hints {
+.map-hints,
+.map-zoom-controls {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-2);
@@ -566,11 +567,42 @@ h1 {
   color: var(--red);
 }
 
-.map-canvas-wrap {
+.map-zoom-controls {
+  display: grid;
+  gap: 10px;
+}
+
+.map-zoom-controls > div:first-child,
+.zoom-buttons {
   display: flex;
-  justify-content: center;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.map-zoom-controls > div:first-child span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.map-zoom-controls label span {
+  display: none;
+}
+
+.map-zoom-controls input {
+  padding: 0;
+}
+
+.zoom-buttons button {
+  flex: 1;
+  padding: 0 10px;
+}
+
+.map-canvas-wrap {
+  max-height: 72vh;
   min-width: 0;
-  overflow: visible;
+  overflow: auto;
+  text-align: center;
 }
 
 .map-canvas {
@@ -591,6 +623,17 @@ h1 {
   max-height: 68vh;
   border-radius: var(--radius);
   object-fit: contain;
+}
+
+.map-canvas.is-sized {
+  max-width: none;
+}
+
+.map-canvas.is-sized img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
 }
 
 .map-pin {

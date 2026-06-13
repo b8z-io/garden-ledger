@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 const sourceLabels = {
   passport: "Passport",
@@ -62,6 +62,11 @@ const selectedMapPlantId = ref("");
 const activePinPlantId = ref("");
 const movingPlantId = ref("");
 const newMapName = ref("");
+const mapZoom = ref(1);
+const mapCanvasWrapEl = ref(null);
+const mapImageEl = ref(null);
+const mapNaturalSize = ref({ width: 0, height: 0 });
+const mapBaseSize = ref({ width: 0, height: 0 });
 
 const sourceTotals = computed(() => {
   return plants.value.reduce(
@@ -195,6 +200,19 @@ const activePinStyle = computed(() => {
   return style;
 });
 
+const mapZoomPercent = computed(() => Math.round(mapZoom.value * 100));
+
+const mapCanvasStyle = computed(() => {
+  if (!mapBaseSize.value.width || !mapBaseSize.value.height) {
+    return {};
+  }
+
+  return {
+    height: `${mapBaseSize.value.height * mapZoom.value}px`,
+    width: `${mapBaseSize.value.width * mapZoom.value}px`,
+  };
+});
+
 watch(theme, (value) => {
   document.documentElement.dataset.theme = value;
   window.localStorage.setItem("garden-ledger-theme", value);
@@ -203,7 +221,10 @@ watch(theme, (value) => {
 watch(selectedMapId, () => {
   activePinPlantId.value = "";
   movingPlantId.value = "";
+  mapZoom.value = 1;
+  mapBaseSize.value = { width: 0, height: 0 };
   chooseFirstUnmappedPlant();
+  nextTick(updateMapBaseSize);
 });
 
 watch(unmappedPlantsForSelectedMap, () => {
@@ -226,6 +247,11 @@ onMounted(async () => {
   }
 
   await Promise.all([loadPlants(), loadGardenMaps()]);
+  window.addEventListener("resize", updateMapBaseSize);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", updateMapBaseSize);
 });
 
 function sourceClass(source) {
@@ -238,6 +264,49 @@ function confidenceLabel(value) {
   }
 
   return `${value.toFixed(value >= 10 ? 1 : 2)}%`;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function setMapZoom(value) {
+  mapZoom.value = clamp(Number(value) || 1, 1, 4);
+}
+
+function adjustMapZoom(amount) {
+  setMapZoom(Math.round((mapZoom.value + amount) * 100) / 100);
+}
+
+function resetMapZoom() {
+  setMapZoom(1);
+}
+
+function updateMapBaseSize() {
+  const image = mapImageEl.value;
+  const wrap = mapCanvasWrapEl.value;
+  const natural = mapNaturalSize.value;
+
+  if (!image || !wrap || !natural.width || !natural.height) {
+    return;
+  }
+
+  const maxWidth = wrap.clientWidth || natural.width;
+  const maxHeight = Math.max(240, window.innerHeight * 0.68);
+  const fit = Math.min(maxWidth / natural.width, maxHeight / natural.height, 1);
+
+  mapBaseSize.value = {
+    width: Math.round(natural.width * fit),
+    height: Math.round(natural.height * fit),
+  };
+}
+
+function onMapImageLoad(event) {
+  mapNaturalSize.value = {
+    width: event.currentTarget.naturalWidth,
+    height: event.currentTarget.naturalHeight,
+  };
+  updateMapBaseSize();
 }
 
 function formatDate(value) {
@@ -1016,11 +1085,45 @@ async function removeMapPlacement(plantId) {
               Cancel move
             </button>
           </div>
+
+          <div v-if="selectedMap" class="map-zoom-controls">
+            <div>
+              <strong>Zoom</strong>
+              <span>{{ mapZoomPercent }}%</span>
+            </div>
+            <label>
+              <span>Map zoom</span>
+              <input
+                :value="mapZoom"
+                max="4"
+                min="1"
+                step="0.05"
+                type="range"
+                @input="setMapZoom($event.target.value)"
+              />
+            </label>
+            <div class="zoom-buttons">
+              <button type="button" @click="adjustMapZoom(-0.25)">-</button>
+              <button type="button" @click="resetMapZoom">Reset</button>
+              <button type="button" @click="adjustMapZoom(0.25)">+</button>
+            </div>
+          </div>
         </div>
 
-        <div class="map-canvas-wrap">
-          <div v-if="selectedMap" class="map-canvas" @click="placePlant">
-            <img :src="selectedMap.imageUrl" :alt="selectedMap.name" />
+        <div ref="mapCanvasWrapEl" class="map-canvas-wrap">
+          <div
+            v-if="selectedMap"
+            class="map-canvas"
+            :class="{ 'is-sized': mapBaseSize.width }"
+            :style="mapCanvasStyle"
+            @click="placePlant"
+          >
+            <img
+              ref="mapImageEl"
+              :src="selectedMap.imageUrl"
+              :alt="selectedMap.name"
+              @load="onMapImageLoad"
+            />
             <button
               v-for="pin in mapPins"
               :key="pin.plantId"
